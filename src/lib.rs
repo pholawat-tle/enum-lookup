@@ -1,6 +1,9 @@
 mod parser;
 pub use parser::*;
 
+mod app_config;
+pub use app_config::*;
+
 #[derive(Debug)]
 pub struct Enum {
     pub name: String,
