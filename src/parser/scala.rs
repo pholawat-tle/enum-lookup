@@ -1,74 +1,52 @@
-use regex::Regex;
-
-use crate::{Enum, KeyValuePair, Parser};
+use crate::{Enum, Parser, RegularExpressionParser};
 
 pub struct EnumerationParser;
 
 const ENUMERATION_BLOCK_REGEX: &str = r"object\s+(\w+)\s+extends\s+Enumeration\s*\{([\s\S]*?)\}";
 const ENUMERATION_VALUES_REGEX: &str = r"val\s+(\w+)[^\r\n]*?=\s*[^\r\n]*?\(([\d]+)([^(\r\n)]*)?\)";
 
-impl Parser for EnumerationParser {
-    fn parse_enums(input: &str) -> Vec<Enum> {
-        let enum_block_regex = Regex::new(ENUMERATION_BLOCK_REGEX).expect(&format!(
-            "Failed to compile regex: {}",
-            ENUMERATION_BLOCK_REGEX
-        ));
-        let enum_values_regex = Regex::new(ENUMERATION_VALUES_REGEX).expect(&format!(
-            "Failed to compile regex: {}",
-            ENUMERATION_VALUES_REGEX
-        ));
+impl RegularExpressionParser for EnumerationParser {
+    fn block_regex(&self) -> &'static str {
+        ENUMERATION_BLOCK_REGEX
+    }
 
-        let enum_blocks_iter = enum_block_regex.captures_iter(input);
-
-        let enums_blocks = enum_blocks_iter.filter_map(|enum_block| {
-            let name = match enum_block.get(1) {
-                Some(name) => name.as_str(),
-                None => return None,
-            };
-
-            let values_block = match enum_block.get(2) {
-                Some(key_value_pairs) => key_value_pairs.as_str(),
-                None => return None,
-            };
-
-            Some((name, values_block))
-        });
-
-        let enums: Vec<Enum> = enums_blocks
-            .map(|(name, values_block)| {
-                let values_iter = enum_values_regex.captures_iter(values_block);
-
-                let key_value_pairs = values_iter
-                    .filter_map(|key_value_pair| {
-                        let key = match key_value_pair.get(1) {
-                            Some(key) => key.as_str(),
-                            None => return None,
-                        };
-
-                        let value = match key_value_pair.get(2) {
-                            Some(value) => value.as_str(),
-                            None => return None,
-                        };
-
-                        Some(KeyValuePair {
-                            key: key.to_string(),
-                            value: value.to_string(),
-                        })
-                    })
-                    .collect();
-
-                Enum {
-                    name: name.to_string(),
-                    key_value_pairs,
-                }
-            })
-            .collect();
-
-        enums
+    fn values_regex(&self) -> &'static str {
+        ENUMERATION_VALUES_REGEX
     }
 }
+
+impl Parser for EnumerationParser {
+    fn parse_enums(input: &str) -> Vec<Enum> {
+        EnumerationParser.parse(input)
+    }
+}
+
+pub struct CaseObjectParser;
+
+const CASE_OBJECT_BLOCK_REGEX: &str = r"object\s+(\w+)\s+extends\s+Enum\[(?:.*)\]\s*\{([\s\S]*?)\}";
+const CASE_OBJECT_VALUES_REGEX: &str =
+    r"case object\s+(\w+)[^\r\n]*?extends\s*[^\r\n]*?\(([\d]+)([^(\r\n)]*)?\)";
+
+impl RegularExpressionParser for CaseObjectParser {
+    fn block_regex(&self) -> &'static str {
+        CASE_OBJECT_BLOCK_REGEX
+    }
+
+    fn values_regex(&self) -> &'static str {
+        CASE_OBJECT_VALUES_REGEX
+    }
+}
+
+impl Parser for CaseObjectParser {
+    fn parse_enums(input: &str) -> Vec<Enum> {
+        CaseObjectParser.parse(input)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::KeyValuePair;
+
     use super::*;
 
     const SINGLE_ENUM_INPUT: &str = "
@@ -99,6 +77,18 @@ mod tests {
         }
     ";
 
+    const CASE_OBJECT_ENUM_INPUT: &str = "
+        object FoodEntries extends Enum[FoodEntry] {
+          val values                          = findValues.toIndexedSeq
+          val fields: Map[Int, FoodEntry]     = values.map(v => (v.i, v)).toMap
+          lazy val getValue: Int => FoodEntry = fields.getOrElse(_, FoodEntries.Unknown)
+
+          case object Unknown extends FoodEntry(0)
+          case object Single  extends FoodEntry(1)
+          case object Bundle  extends FoodEntry(2)
+        }
+    ";
+
     const EMPTY_ENUM_INPUT: &str = "
         object ProductType extends Enumeration {
           type ProductType = Value
@@ -112,7 +102,7 @@ mod tests {
     ";
 
     #[test]
-    fn parse_single_enum() {
+    fn enumeration_parser_parse_single_enum() {
         let result = EnumerationParser::parse_enums(SINGLE_ENUM_INPUT);
         assert_eq!(result.len(), 1);
 
@@ -142,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_multiple_enums() {
+    fn enumeration_parser_parse_multiple_enums() {
         let result = EnumerationParser::parse_enums(MULTIPLE_ENUMS_INPUT);
         assert_eq!(result.len(), 2);
 
@@ -196,7 +186,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_empty_enum() {
+    fn enumeration_parser_parse_case_object_enum() {
+        let result = EnumerationParser::parse_enums(CASE_OBJECT_ENUM_INPUT);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn enumeration_parser_parse_empty_enum() {
         let result = EnumerationParser::parse_enums(EMPTY_ENUM_INPUT);
         assert_eq!(result.len(), 1);
 
@@ -209,8 +205,62 @@ mod tests {
     }
 
     #[test]
-    fn parse_no_enum() {
+    fn enumeration_parser_parse_no_enum() {
         let result = EnumerationParser::parse_enums(NO_ENUM_INPUT);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn case_object_parser_parse_single_enum() {
+        let result = CaseObjectParser::parse_enums(SINGLE_ENUM_INPUT);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn case_object_parser_parse_multiple_enums() {
+        let result = CaseObjectParser::parse_enums(MULTIPLE_ENUMS_INPUT);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn case_object_parser_parse_case_object_enum() {
+        let result = CaseObjectParser::parse_enums(CASE_OBJECT_ENUM_INPUT);
+        assert_eq!(result.len(), 1);
+
+        let first_enum = result.get(0);
+        assert_eq!(first_enum.is_some(), true);
+
+        let first_enum = first_enum.unwrap();
+        assert_eq!(first_enum.name, "FoodEntries");
+        assert_eq!(first_enum.key_value_pairs.len(), 3);
+        assert_eq!(
+            first_enum.key_value_pairs,
+            vec![
+                KeyValuePair {
+                    key: "Unknown".to_string(),
+                    value: "0".to_string(),
+                },
+                KeyValuePair {
+                    key: "Single".to_string(),
+                    value: "1".to_string(),
+                },
+                KeyValuePair {
+                    key: "Bundle".to_string(),
+                    value: "2".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn case_object_parser_parse_empty_enum() {
+        let result = CaseObjectParser::parse_enums(EMPTY_ENUM_INPUT);
+        assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn case_object_parser_parse_no_enum() {
+        let result = CaseObjectParser::parse_enums(NO_ENUM_INPUT);
         assert_eq!(result.len(), 0);
     }
 }
